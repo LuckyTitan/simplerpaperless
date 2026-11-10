@@ -1,0 +1,352 @@
+from __future__ import annotations
+
+import logging
+import mimetypes
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import TYPE_CHECKING
+from typing import Final
+
+from django.conf import settings
+
+from documents.loggers import LoggingMixin
+from documents.utils import copy_file_with_basic_stats
+from documents.utils import run_subprocess
+from paperless.parsers.registry import get_parser_registry
+
+if TYPE_CHECKING:
+    import datetime
+
+logger = logging.getLogger("paperless.parsing")
+
+
+def is_mime_type_supported(mime_type: str) -> bool:
+    """
+    Returns True if the mime type is supported, False otherwise
+    """
+    return get_parser_registry().get_parser_for_file(mime_type, "") is not None
+
+
+def get_default_file_extension(mime_type: str) -> str:
+    """
+    Returns the default file extension for a mimetype, or
+    an empty string if it could not be determined
+    """
+    parser_class = get_parser_registry().get_parser_for_file(mime_type, "")
+    if parser_class is not None:
+        supported = parser_class.supported_mime_types()
+        if mime_type in supported:
+            return supported[mime_type]
+
+    ext = mimetypes.guess_extension(mime_type)
+    return ext if ext else ""
+
+
+def is_file_ext_supported(ext: str) -> bool:
+    """
+    Returns True if the file extension is supported, False otherwise
+    TODO: Investigate why this really exists, why not use mimetype
+    """
+    if ext:
+        return ext.lower() in get_supported_file_extensions()
+    else:
+        return False
+
+
+def get_supported_file_extensions() -> set[str]:
+    extensions = set()
+    for parser_class in get_parser_registry().all_parsers():
+        for mime_type, ext in parser_class.supported_mime_types().items():
+            extensions.update(mimetypes.guess_all_extensions(mime_type))
+            # Python's stdlib might be behind, so also add what the parser
+            # says is the default extension
+            # This makes image/webp supported on Python < 3.11
+            extensions.add(ext)
+
+    return extensions
+
+
+def get_default_thumbnail() -> Path:
+    """
+    Returns the path to a generic thumbnail
+    """
+    return (Path(__file__).parent / "resources" / "document.webp").resolve()
+
+
+_THUMBNAIL_MAX_WIDTH: Final[int] = 500
+_THUMBNAIL_MAX_HEIGHT: Final[int] = 5000
+# Used only when the page geometry cannot be read
+_THUMBNAIL_FALLBACK_DPI: Final[int] = 150
+# Applied before supersampling, so tiny pages are not enlarged
+_THUMBNAIL_MAX_DPI: Final[int] = 300
+# Rendering at a multiple and downsampling keeps text crisper
+_THUMBNAIL_SUPERSAMPLE: Final[int] = 2
+
+
+def rasterize_pdf_page_to_png(
+    in_path: Path,
+    out_path: Path,
+    *,
+    dpi: float,
+    logging_group=None,
+) -> None:
+    """
+    Rasterizes the first page of a PDF to a PNG with pdftoppm.
+    """
+    args = [
+        "pdftoppm",
+        # Only the first page is needed, first and last page are both 1
+        "-f",
+        "1",
+        "-l",
+        "1",
+        # Resolution in DPI, which may be fractional
+        "-r",
+        str(dpi),
+        # Write a PNG
+        "-png",
+        # Write exactly one file with no page number in its name. -png appends
+        # ".png" to the output root, so the path is passed without its suffix
+        "-singlefile",
+        # Render the CropBox instead of the MediaBox, as a viewer would. This
+        # must be the same box get_pdf_first_page_size_points measures, or the
+        # DPI is computed for the wrong size
+        "-cropbox",
+        str(in_path),
+        str(out_path.with_suffix("")),
+    ]
+
+    logger.debug("Execute: " + " ".join(args), extra={"group": logging_group})
+
+    try:
+        run_subprocess(args, logger=logger)
+    except subprocess.CalledProcessError as e:
+        raise ParseError(f"pdftoppm failed at {args}") from e
+    except Exception as e:  # pragma: no cover
+        raise ParseError("Unknown error running pdftoppm") from e
+
+
+def encode_thumbnail_webp(
+    png_path: Path,
+    out_path: Path,
+    *,
+    supersample: int = 1,
+) -> None:
+    """
+    Flattens alpha onto white, undoes supersampling, shrinks to fit and saves as WebP.
+    """
+    from PIL import Image
+
+    try:
+        with Image.open(png_path) as im:
+            if im.mode in ("RGBA", "LA"):
+                flattened = Image.new("RGB", im.size, (255, 255, 255))
+                flattened.paste(im, mask=im.split()[-1])
+            else:
+                flattened = im.convert("RGB")
+
+        # One resize avoids a second, softer pass: undo the supersample and
+        # clamp to the bounds together, never enlarging
+        scale = min(
+            1 / supersample,
+            _THUMBNAIL_MAX_WIDTH / flattened.width,
+            _THUMBNAIL_MAX_HEIGHT / flattened.height,
+        )
+        if scale < 1:
+            flattened = flattened.resize(
+                (
+                    max(1, round(flattened.width * scale)),
+                    max(1, round(flattened.height * scale)),
+                ),
+                Image.Resampling.LANCZOS,
+            )
+
+        flattened.save(out_path, format="WEBP")
+    except (OSError, Image.DecompressionBombError) as e:
+        raise ParseError(f"Unable to encode thumbnail from {png_path}") from e
+
+
+def _compute_thumbnail_dpi(in_path: Path, logging_group=None) -> tuple[float, int]:
+    """
+    Returns (dpi, supersample). Unknown geometry is not supersampled, since
+    the render size cannot be bounded.
+
+    The DPI is left fractional rather than floored at 1, so an oversized page
+    still renders at about the thumbnail size instead of an unbounded raster.
+    pdftoppm rounds pixel dimensions up, so the render is never short of the
+    target; the shrink-only clamp in encode_thumbnail_webp trims any excess.
+    """
+    from paperless.parsers.utils import get_pdf_first_page_size_points
+
+    size = get_pdf_first_page_size_points(in_path)
+    if size is None:
+        logger.debug(
+            "Could not read PDF page size, using fallback DPI",
+            extra={"group": logging_group},
+        )
+        return _THUMBNAIL_FALLBACK_DPI, 1
+
+    width_pts, height_pts = size
+    dpi_for_width = _THUMBNAIL_MAX_WIDTH * 72 / width_pts
+    dpi_for_height = _THUMBNAIL_MAX_HEIGHT * 72 / height_pts
+    return (
+        min(_THUMBNAIL_MAX_DPI, dpi_for_width, dpi_for_height),
+        _THUMBNAIL_SUPERSAMPLE,
+    )
+
+
+def _render_pdf_thumbnail(
+    in_path: Path,
+    png_path: Path,
+    out_path: Path,
+    logging_group=None,
+) -> None:
+    dpi, supersample = _compute_thumbnail_dpi(in_path, logging_group=logging_group)
+    rasterize_pdf_page_to_png(
+        in_path,
+        png_path,
+        dpi=dpi * supersample,
+        logging_group=logging_group,
+    )
+    encode_thumbnail_webp(png_path, out_path, supersample=supersample)
+
+
+def _repair_pdf_with_qpdf(in_path: Path, out_path: Path) -> None:
+    # qpdf exits 3 after a repair; --warning-exit-0 keeps that from failing
+    try:
+        shutil.copy(in_path, out_path)
+        run_subprocess(
+            ["qpdf", "--warning-exit-0", "--replace-input", str(out_path)],
+            logger=logger,
+        )
+    except (subprocess.CalledProcessError, OSError) as e:
+        raise ParseError(f"qpdf repair failed for {in_path}") from e
+
+
+def make_thumbnail_from_pdf_qpdf_fallback(
+    in_path: Path,
+    temp_dir: Path,
+    logging_group=None,
+) -> Path:
+    png_path = temp_dir / "page1_repaired.png"
+    out_path = temp_dir / "convert_qpdf.webp"
+    repaired_path = temp_dir / "repaired.pdf"
+
+    logger.warning(
+        "Thumbnail generation with pdftoppm failed, attempting qpdf repair and retry.",
+        extra={"group": logging_group},
+    )
+
+    try:
+        _repair_pdf_with_qpdf(in_path, repaired_path)
+        _render_pdf_thumbnail(repaired_path, png_path, out_path, logging_group)
+        return out_path
+
+    except ParseError as e:
+        logger.error(f"Unable to make thumbnail after qpdf repair: {e}")
+        # The caller might expect a generated thumbnail that can be moved,
+        # so we need to copy it before it gets moved.
+        # https://github.com/paperless-ngx/paperless-ngx/issues/3631
+        default_thumbnail_path = temp_dir / "document.webp"
+        copy_file_with_basic_stats(get_default_thumbnail(), default_thumbnail_path)
+        return default_thumbnail_path
+
+
+def make_thumbnail_from_pdf(in_path: Path, temp_dir: Path, logging_group=None) -> Path:
+    """
+    The thumbnail of a PDF is just a 500px wide image of the first page.
+    """
+    png_path: Path = temp_dir / "page1.png"
+    out_path: Path = temp_dir / "convert.webp"
+
+    try:
+        _render_pdf_thumbnail(in_path, png_path, out_path, logging_group)
+    except ParseError as e:
+        logger.error(f"Unable to make thumbnail with pdftoppm: {e}")
+        out_path = make_thumbnail_from_pdf_qpdf_fallback(
+            in_path,
+            temp_dir,
+            logging_group,
+        )
+
+    return out_path
+
+
+class ParseError(Exception):
+    pass
+
+
+class DocumentParser(LoggingMixin):
+    """
+    Subclass this to make your own parser.  Have a look at
+    `paperless_tesseract.parsers` for inspiration.
+    """
+
+    logging_name = "paperless.parsing"
+
+    def __init__(self, logging_group, progress_callback=None) -> None:
+        super().__init__()
+        self.renew_logging_group()
+        self.logging_group = logging_group
+        self.settings = self.get_settings()
+        settings.SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
+        self.tempdir = Path(
+            tempfile.mkdtemp(prefix="paperless-", dir=settings.SCRATCH_DIR),
+        )
+
+        self.archive_path = None
+        self.text = None
+        self.date: datetime.datetime | None = None
+        self.progress_callback = progress_callback
+
+    def progress(self, current_progress, max_progress) -> None:
+        if self.progress_callback:
+            self.progress_callback(current_progress, max_progress)
+
+    def get_settings(self):  # pragma: no cover
+        """
+        A parser must implement this
+        """
+        raise NotImplementedError
+
+    def read_file_handle_unicode_errors(self, filepath: Path) -> str:
+        """
+        Helper utility for reading from a file, and handling a problem with its
+        unicode, falling back to ignoring the error to remove the invalid bytes
+        """
+        try:
+            text = filepath.read_text(encoding="utf-8")
+        except UnicodeDecodeError as e:
+            self.log.warning(f"Unicode error during text reading, continuing: {e}")
+            text = filepath.read_bytes().decode("utf-8", errors="replace")
+        return text
+
+    def extract_metadata(self, document_path, mime_type):
+        return []
+
+    def get_page_count(self, document_path, mime_type) -> None:
+        return None
+
+    def parse(self, document_path, mime_type, file_name=None):
+        raise NotImplementedError
+
+    def get_archive_path(self):
+        return self.archive_path
+
+    def get_thumbnail(self, document_path, mime_type, file_name=None):
+        """
+        Returns the path to a file we can use as a thumbnail for this document.
+        """
+        raise NotImplementedError
+
+    def get_text(self):
+        return self.text
+
+    def get_date(self) -> datetime.datetime | None:
+        return self.date
+
+    def cleanup(self) -> None:
+        self.log.debug(f"Deleting directory {self.tempdir}")
+        shutil.rmtree(self.tempdir)
