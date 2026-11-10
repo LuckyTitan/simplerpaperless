@@ -1,0 +1,28 @@
+# Portainer: Stacks -> Add stack -> Web editor -> diesen Inhalt einfügen -> Deploy.
+# Das Image wird beim ersten Deploy direkt aus GitHub gebaut (dauert einige Minuten).
+services:
+  archiv:
+    build:
+      context: https://github.com/LuckyTitan/betterpaperless.git#main
+    image: archiv:latest
+    container_name: archiv
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      PAPERLESS_TIME_ZONE: Europe/Berlin
+      PAPERLESS_OCR_LANGUAGE: deu+eng
+      # Bei Reverse-Proxy setzen, z. B. https://archiv.example.de
+      # PAPERLESS_URL: https://archiv.example.de
+      # Optional: ersten Admin direkt anlegen (sonst fragt die Weboberfläche beim ersten Aufruf)
+      # PAPERLESS_ADMIN_USER: admin
+      # PAPERLESS_ADMIN_PASSWORD: bitte-aendern
+    volumes:
+      - archiv_data:/data        # Datenbank, Suchindex, Warteschlange
+      - archiv_media:/media      # deine Dokumente
+      # Consume-Ordner: Pfad auf dem Host anpassen (z. B. Unraid: /mnt/user/scans/archiv)
+      - /opt/archiv/consume:/consume
+
+volumes:
+  archiv_data:
+  archiv_media:
