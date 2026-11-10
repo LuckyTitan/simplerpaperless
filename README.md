@@ -9,7 +9,7 @@ Redis, Postgres/MariaDB, MFA/Social-Login und die komplette Angular-Oberfläche.
 ## Start mit Portainer (ohne lokalen Build)
 
 GitHub baut das Image bei jedem Push automatisch (`.github/workflows/image.yml`) und legt es unter
-`ghcr.io/luckytitan/betterpaperless:latest` ab. In Portainer den Inhalt von `docker-compose.portainer.yml`
+`ghcr.io/luckytitan/simplerpaperless:latest` ab. In Portainer den Inhalt von `docker-compose.portainer.yml`
 als Stack einfügen. Zum Aktualisieren: **Update the stack** mit aktiviertem *Re-pull image*.
 Das Paket muss auf GitHub unter *Packages → Package settings* auf **Public** stehen.
 

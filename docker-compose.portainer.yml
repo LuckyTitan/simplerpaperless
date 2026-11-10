@@ -2,7 +2,7 @@
 # Das fertige Image wird von GitHub gebaut und hier nur geladen (kein Build auf deinem Server).
 services:
   archiv:
-    image: ghcr.io/luckytitan/betterpaperless:latest
+    image: ghcr.io/luckytitan/simplerpaperless:latest
     container_name: archiv
     pull_policy: always
     restart: unless-stopped
