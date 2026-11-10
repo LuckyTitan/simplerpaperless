@@ -1,0 +1,19 @@
+services:
+  archiv:
+    build: .
+    container_name: archiv
+    restart: unless-stopped
+    ports:
+      - "8010:8000"
+    environment:
+      PAPERLESS_TIME_ZONE: Europe/Berlin
+      PAPERLESS_OCR_LANGUAGE: deu+eng
+      # Optional, but recommended when served via a reverse proxy:
+      # PAPERLESS_URL: https://archiv.example.de
+      # Optional first admin (otherwise the web UI asks on first visit):
+      # PAPERLESS_ADMIN_USER: admin
+      # PAPERLESS_ADMIN_PASSWORD: change-me
+    volumes:
+      - ./data:/data        # SQLite database, search index, queue
+      - ./media:/media      # your documents
+      - ./consume:/consume  # drop scans here to import them automatically
