@@ -100,6 +100,14 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0}
 .meta small.who{color:var(--ink);font-weight:550}
 .hint{color:var(--muted);padding:4px 10px 6px;font-size:14px;margin:0}
 .item .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ents{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.ent{display:flex;align-items:center;background:var(--surface);border-radius:var(--r);box-shadow:var(--shadow)}
+.ent .open{flex:1;min-width:0;display:flex;align-items:center;gap:10px;border:0;background:none;text-align:left;padding:14px 16px;border-radius:var(--r)}
+.ent .open .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ent .open .n{margin-left:auto;color:var(--muted);font-size:13px;white-space:nowrap}
+.ent .edit{border:0;background:none;color:var(--muted);padding:8px 12px;margin-right:4px;border-radius:6px}
+.ent .edit:hover{background:var(--accent-soft);color:var(--accent)}
+.ent:hover{outline:1px solid var(--accent)}
 .navrow{display:flex;align-items:center}
 .navrow .item{flex:1;min-width:0}
 .navrow .edit{border:0;background:none;color:var(--muted);opacity:0;padding:4px 8px;border-radius:6px;margin-left:2px}
@@ -267,29 +275,37 @@ const KINDS = {
 };
 function renderNav() {
   const nav = $("#nav"); if (!nav) return;
-  const idle = !state.tag && !state.corr && !state.dtype && !state.untagged && state.view === "docs";
-  const section = (k) => {
-    const K = KINDS[k], items = state[K.list];
-    return `<div class="nav-h">${K.title} <button data-add="${k}" aria-label="${K.one} anlegen" title="${K.one} anlegen">+</button></div>
-      ${items.map(t => `<div class="navrow"><button class="item ${state[K.st] === t.id && state.view === "docs" ? "on" : ""}" data-k="${k}" data-id="${t.id}">
-        ${k === "tag" ? `<i class="dot" style="background:${esc(t.color)}"></i>` : ""}<span class="nm">${esc(t.name)}</span><span class="n">${t.document_count}</span></button>
-        <button class="edit" data-edit="${k}" data-id="${t.id}" aria-label="${esc(t.name)} bearbeiten" title="Bearbeiten">✎</button></div>`).join("")}
-      ${items.length ? "" : `<p class="hint">${K.none}</p>`}`;
-  };
+  const docs = state.view === "docs", filt = state.tag || state.corr || state.dtype;
+  const idle = !filt && !state.untagged && docs;
+  const entry = (k) => `<button class="item ${state.view === k || (docs && state[KINDS[k].st] && !state.untagged) ? "on" : ""}" data-view="${k}"><span class="nm">${KINDS[k].title}</span><span class="n">${state[KINDS[k].list].length || ""}</span></button>`;
   nav.innerHTML = `<button class="item ${idle ? "on" : ""}" data-all="1">Alle Dokumente</button>
-    <button class="item ${state.untagged && state.view === "docs" ? "on" : ""}" data-none="1">Ohne Tag</button>` + section("tag") + section("corr") + section("type");
+    <button class="item ${state.untagged && docs ? "on" : ""}" data-none="1">Ohne Tag</button>
+    <div class="nav-h">Verwalten</div>` + entry("tag") + entry("corr") + entry("type");
   nav.onclick = (e) => {
     const b = e.target.closest("button"); if (!b) return;
-    if (b.dataset.add) return entityDialog(b.dataset.add);
-    if (b.dataset.edit) return entityDialog(b.dataset.edit, state[KINDS[b.dataset.edit].list].find(t => t.id === +b.dataset.id));
+    if (b.dataset.view) return setView(b.dataset.view);
     if (b.dataset.all) { state.tag = state.corr = state.dtype = null; state.untagged = false; }
-    else if (b.dataset.none) { state.untagged = !state.untagged; if (state.untagged) state.tag = null; }
-    else if (b.dataset.k) {
-      const f = KINDS[b.dataset.k].st, id = +b.dataset.id;
-      state[f] = state[f] === id ? null : id;
-      if (f === "tag" && state.tag) state.untagged = false;
-    } else return;
+    else if (b.dataset.none) { state.tag = state.corr = state.dtype = null; state.untagged = true; }
+    else return;
     setView("docs"); reload();
+  };
+}
+
+function renderEntities(k) {
+  const K = KINDS[k], items = state[K.list], page = $("#page");
+  page.innerHTML = `<div class="crumb"><h2>${K.title}</h2><span>${items.length}</span><span style="flex:1"></span>
+      <button class="btn primary" id="addEnt">${K.one} anlegen</button></div>
+    ${items.length ? `<div class="ents">${items.map(t => `<div class="ent">
+        <button class="open" data-id="${t.id}">${k === "tag" ? `<i class="dot" style="background:${esc(t.color)}"></i>` : ""}<span class="nm">${esc(t.name)}</span>
+          <span class="n">${t.document_count} ${t.document_count === 1 ? "Dokument" : "Dokumente"}</span></button>
+        <button class="edit" data-edit="${t.id}" aria-label="${esc(t.name)} bearbeiten" title="Bearbeiten">✎</button></div>`).join("")}</div>`
+      : `<div class="empty"><b>${K.none}</b><span>Lege oben rechts den ersten an.</span></div>`}`;
+  page.onclick = (e) => {
+    if (e.target.closest("#addEnt")) return entityDialog(k);
+    const ed = e.target.closest("[data-edit]");
+    if (ed) return entityDialog(k, items.find(t => t.id === +ed.dataset.edit));
+    const o = e.target.closest(".open");
+    if (o) { state.tag = state.corr = state.dtype = null; state.untagged = false; state[K.st] = +o.dataset.id; setView("docs"); reload(); }
   };
 }
 
@@ -301,6 +317,7 @@ function setView(v) {
   $("#aside").classList.remove("on"); renderNav();
   closePanel();
   if (v === "trash") renderTrash(); else if (v === "settings") renderSettings();
+  else if (KINDS[v]) renderEntities(v);
 }
 
 /* ---------- documents ---------- */
@@ -457,7 +474,7 @@ function entityDialog(kind, obj) {
 }
 async function loadMeta() {
   [state.tags, state.corrs, state.types] = await Promise.all([api("/tags/"), api("/correspondents/"), api("/document_types/")]);
-  renderNav();
+  renderNav(); if (KINDS[state.view]) renderEntities(state.view);
 }
 async function refreshAll() { await loadMeta(); await reload(); }
 
