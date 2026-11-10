@@ -618,13 +618,21 @@ def preferences_view(request):
             size = int(size)
         except (TypeError, ValueError):
             size = 0
-        if theme not in THEMES or size not in PAGE_SIZES:
+        try:
+            hue = int(request.data.get("hue", data.get("hue", 176)))
+        except (TypeError, ValueError):
+            hue = -1
+        if theme not in THEMES or size not in PAGE_SIZES or not 0 <= hue <= 360:
             return Response({"detail": "Ungültiger Wert."}, status=400)
-        data.update({"theme": theme, "page_size": size})
+        data.update({"theme": theme, "page_size": size, "hue": hue})
         ui.settings = data
         ui.save()
     return Response(
-        {"theme": data.get("theme", "system"), "page_size": data.get("page_size", 30)},
+        {
+            "theme": data.get("theme", "system"),
+            "page_size": data.get("page_size", 30),
+            "hue": data.get("hue", 176),
+        },
     )
 
 

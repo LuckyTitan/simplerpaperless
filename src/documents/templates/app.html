@@ -8,17 +8,17 @@
 <style>
 :root{
   --bg:#f5f6f8; --surface:#fff; --ink:#15202b; --muted:#66727f; --line:#e2e6ea;
-  --accent:#0e7c74; --accent-ink:#fff; --accent-soft:#e1f1ef; --danger:#b3261e;
+  --h:176; --accent:hsl(var(--h) 80% 26%); --accent-ink:#fff; --accent-soft:hsl(var(--h) 36% 91%); --danger:#b3261e;
   --shadow:0 1px 2px rgba(21,32,43,.06),0 4px 14px rgba(21,32,43,.06);
   --r:10px;
 }
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){--bg:#0f151b; --surface:#171f27; --ink:#e8edf2; --muted:#8c99a6; --line:#26313b;
-    --accent:#35b3a8; --accent-ink:#04201d; --accent-soft:#16312f; --danger:#f2918a;
+    --accent:hsl(var(--h) 53% 46%); --accent-ink:#04201d; --accent-soft:hsl(var(--h) 36% 15%); --danger:#f2918a;
     --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 18px rgba(0,0,0,.35)}
 }
 :root[data-theme="dark"]{--bg:#0f151b; --surface:#171f27; --ink:#e8edf2; --muted:#8c99a6; --line:#26313b;
-  --accent:#35b3a8; --accent-ink:#04201d; --accent-soft:#16312f; --danger:#f2918a;
+  --accent:hsl(var(--h) 53% 46%); --accent-ink:#04201d; --accent-soft:hsl(var(--h) 36% 15%); --danger:#f2918a;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 18px rgba(0,0,0,.35)}
 *{box-sizing:border-box}
 html,body,#root{height:100%}
@@ -100,6 +100,12 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0}
 .meta small.who{color:var(--ink);font-weight:550}
 .hint{color:var(--muted);padding:4px 10px 6px;font-size:14px;margin:0}
 .item .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.filters select{padding:7px 10px;border:1px solid var(--line);background:var(--surface);border-radius:8px;min-width:0;max-width:100%}
+.filters select.on{border-color:var(--accent);color:var(--accent);font-weight:600}
+.hue{width:100%;height:12px;appearance:none;border-radius:6px;border:0;background:linear-gradient(90deg,hsl(0 70% 45%),hsl(60 70% 45%),hsl(120 70% 38%),hsl(180 70% 38%),hsl(240 70% 55%),hsl(300 70% 45%),hsl(360 70% 45%));outline-offset:4px}
+.hue::-webkit-slider-thumb{appearance:none;width:22px;height:22px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--muted)}
+.hue::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--muted)}
 .ents{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
 .ent{display:flex;align-items:center;background:var(--surface);border-radius:var(--r);box-shadow:var(--shadow)}
 .ent .open{flex:1;min-width:0;display:flex;align-items:center;gap:10px;border:0;background:none;text-align:left;padding:14px 16px;border-radius:var(--r)}
@@ -250,7 +256,7 @@ function shell() {
         <label class="btn primary" for="file">Hochladen</label>
         <input id="file" type="file" multiple hidden accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.webp,.gif,.txt,.doc,.docx,.odt">
       </div>
-      <div class="scroll" id="scroll"><div id="docsView"><div class="crumb" id="crumb"></div><div id="list"></div></div><div id="page" hidden></div></div>
+      <div class="scroll" id="scroll"><div id="docsView"><div class="crumb" id="crumb"></div><div class="filters" id="filters"></div><div id="list"></div></div><div id="page" hidden></div></div>
     </main>
     <div class="veil" id="veil"></div>
     <section class="panel" id="panel" aria-label="Dokument"></section>
@@ -277,9 +283,9 @@ function renderNav() {
   const nav = $("#nav"); if (!nav) return;
   const docs = state.view === "docs", filt = state.tag || state.corr || state.dtype;
   const idle = !filt && !state.untagged && docs;
-  const entry = (k) => `<button class="item ${state.view === k || (docs && state[KINDS[k].st] && !state.untagged) ? "on" : ""}" data-view="${k}"><span class="nm">${KINDS[k].title}</span><span class="n">${state[KINDS[k].list].length || ""}</span></button>`;
+  const entry = (k) => `<button class="item ${state.view === k ? "on" : ""}" data-view="${k}"><span class="nm">${KINDS[k].title}</span><span class="n">${state[KINDS[k].list].length || ""}</span></button>`;
   nav.innerHTML = `<button class="item ${idle ? "on" : ""}" data-all="1">Alle Dokumente</button>
-    <button class="item ${state.untagged && docs ? "on" : ""}" data-none="1">Ohne Tag</button>
+    <button class="item ${state.untagged && docs ? "on" : ""}" data-none="1">Posteingang</button>
     <div class="nav-h">Verwalten</div>` + entry("tag") + entry("corr") + entry("type");
   nav.onclick = (e) => {
     const b = e.target.closest("button"); if (!b) return;
@@ -289,6 +295,18 @@ function renderNav() {
     else return;
     setView("docs"); reload();
   };
+}
+
+function renderFilters() {
+  const f = $("#filters"); if (!f) return;
+  const sel = (id, label, items, cur) => `<select id="${id}" class="${cur ? "on" : ""}" aria-label="${label}"><option value="">${label}</option>${items.map(t => `<option value="${t.id}" ${t.id === cur ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select>`;
+  f.innerHTML = sel("fTag", "Alle Tags", state.tags, state.tag) + sel("fCorr", "Alle Korrespondenten", state.corrs, state.corr) + sel("fType", "Alle Dokumenttypen", state.types, state.dtype)
+    + (state.tag || state.corr || state.dtype || state.untagged ? '<button class="btn ghost" id="fReset">Filter zurücksetzen</button>' : "");
+  const set = (k, v) => { state[k] = v ? +v : null; if (k === "tag" && v) state.untagged = false; renderFilters(); renderNav(); reload(); };
+  $("#fTag").onchange = (e) => set("tag", e.target.value);
+  $("#fCorr").onchange = (e) => set("corr", e.target.value);
+  $("#fType").onchange = (e) => set("dtype", e.target.value);
+  const r = $("#fReset"); if (r) r.onclick = () => { state.tag = state.corr = state.dtype = null; state.untagged = false; renderFilters(); renderNav(); reload(); };
 }
 
 function renderEntities(k) {
@@ -318,6 +336,7 @@ function setView(v) {
   closePanel();
   if (v === "trash") renderTrash(); else if (v === "settings") renderSettings();
   else if (KINDS[v]) renderEntities(v);
+  if (v === "docs") renderFilters();
 }
 
 /* ---------- documents ---------- */
@@ -352,7 +371,7 @@ function tagChips(ids) {
 }
 function renderList() {
   const parts = [];
-  if (state.untagged) parts.push("Ohne Tag");
+  if (state.untagged) parts.push("Posteingang");
   if (state.tag) parts.push(nameOf(state.tags, state.tag));
   if (state.corr) parts.push(nameOf(state.corrs, state.corr));
   if (state.dtype) parts.push(nameOf(state.types, state.dtype));
@@ -474,7 +493,7 @@ function entityDialog(kind, obj) {
 }
 async function loadMeta() {
   [state.tags, state.corrs, state.types] = await Promise.all([api("/tags/"), api("/correspondents/"), api("/document_types/")]);
-  renderNav(); if (KINDS[state.view]) renderEntities(state.view);
+  renderNav(); if (KINDS[state.view]) renderEntities(state.view); if (state.view === "docs") renderFilters();
 }
 async function refreshAll() { await loadMeta(); await reload(); }
 
@@ -516,6 +535,7 @@ async function renderTrash() {
 /* ---------- settings ---------- */
 function applyPrefs(p) {
   state.pageSize = p.page_size;
+  document.documentElement.style.setProperty("--h", p.hue ?? 176);
   if (p.theme === "system") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = p.theme;
 }
 function renderSettings(tab) {
@@ -536,10 +556,15 @@ async function setGeneral(el) {
     <div class="field"><label for="sTheme">Farbschema</label><select id="sTheme">
       <option value="system">Wie das Gerät</option><option value="light">Hell</option><option value="dark">Dunkel</option></select></div>
     <div class="field"><label for="sSize">Dokumente pro Seite</label><select id="sSize">
-      ${[30, 60, 100].map(n => `<option value="${n}">${n}</option>`).join("")}</select></div></div>`;
+      ${[30, 60, 100].map(n => `<option value="${n}">${n}</option>`).join("")}</select></div>
+    <div class="field"><label for="sHue">Akzentfarbe</label><input class="hue" id="sHue" type="range" min="0" max="360" step="1" aria-label="Akzentfarbe">
+      <small>Schieber bewegen, um die Farbe der Oberfläche zu ändern. <button class="btn ghost" id="hueReset" style="padding:2px 8px">Zurücksetzen</button></small></div></div>`;
+  $("#sHue").value = p.hue;
+  let ht; $("#sHue").oninput = (e) => { document.documentElement.style.setProperty("--h", e.target.value); clearTimeout(ht); ht = setTimeout(() => save({ hue: +e.target.value }, true), 400); };
+  $("#hueReset").onclick = () => { $("#sHue").value = 176; document.documentElement.style.setProperty("--h", 176); save({ hue: 176 }); };
   $("#sTheme").value = p.theme; $("#sSize").value = p.page_size;
-  const save = async (patch) => {
-    try { const r = await api("/preferences/", { method: "PATCH", json: patch }); applyPrefs(r); toast("Gespeichert"); } catch (e) { toast(e.message); }
+  const save = async (patch, quiet) => {
+    try { const r = await api("/preferences/", { method: "PATCH", json: patch }); applyPrefs(r); if (!quiet) toast("Gespeichert"); } catch (e) { toast(e.message); }
   };
   $("#sTheme").onchange = (e) => save({ theme: e.target.value });
   $("#sSize").onchange = (e) => save({ page_size: +e.target.value });
