@@ -16,6 +16,9 @@ from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth import login
 from django.contrib.auth import logout
+from django.contrib.auth import update_session_auth_hash
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.contrib.auth.models import User
 from django.db import transaction
 from django.db.models import Count
@@ -46,11 +49,14 @@ from documents.models import Correspondent
 from documents.models import Document
 from documents.models import DocumentType
 from documents.models import Tag
+from documents.models import UiSettings
 from documents.search import SearchMode
 from documents.search import SearchQueryError
 from documents.search import get_backend
 from documents.search import search_query_error_messages
 from documents.tasks import consume_file
+from documents.tasks import empty_trash
+from paperless.models import ApplicationConfiguration
 
 
 # --------------------------------------------------------------------------- #
@@ -235,16 +241,17 @@ def _me(user) -> dict:
 
 
 @api_view(["GET"])
-@authentication_classes([])
+@authentication_classes([SessionAuthentication])
 @permission_classes([AllowAny])
 def session_view(request):
     """State for the SPA bootstrap: who am I, and does an account exist yet."""
     token = get_token(request)
+    user = request.user
     return Response(
         {
             "csrf": token,
             "needs_setup": not User.objects.exists(),
-            "user": _me(request.user) if request.user.is_authenticated else None,
+            "user": _me(user) if user.is_authenticated else None,
         },
     )
 
@@ -449,7 +456,10 @@ class DocumentViewSet(ModelViewSet):
 
 
 def _get_doc(request, pk) -> Document:
-    doc = visible_documents(request.user).filter(pk=pk).first()
+    if request.query_params.get("trash") in ("1", "true"):
+        doc = trash_documents(request.user).filter(pk=pk).first()
+    else:
+        doc = visible_documents(request.user).filter(pk=pk).first()
     if doc is None:
         raise Http404
     return doc
@@ -525,6 +535,159 @@ def autocomplete_view(request):
         return Response([])
     user = None if request.user.is_superuser else request.user
     return Response(get_backend().autocomplete(term, 8, user))
+
+
+# --------------------------------------------------------------------------- #
+# trash
+# --------------------------------------------------------------------------- #
+def trash_documents(user):
+    # A version is listed only when its root is not in the trash as well.
+    qs = Document.deleted_objects.exclude(
+        root_document_id__in=Document.deleted_objects.values("id"),
+    )
+    if user.is_superuser:
+        return qs
+    return qs.filter(Q(owner=user) | Q(owner__isnull=True))
+
+
+class TrashSerializer(DocumentSerializer):
+    class Meta(DocumentSerializer.Meta):
+        fields = (*DocumentSerializer.Meta.fields, "deleted_at")
+        read_only_fields = (*DocumentSerializer.Meta.read_only_fields, "deleted_at")
+
+
+def _ids(request) -> list[int] | None:
+    raw = request.data.get("ids")
+    if raw is None:
+        return None
+    return [int(i) for i in raw if str(i).isdigit()]
+
+
+@api_view(["GET"])
+def trash_list(request):
+    paginator = Pagination()
+    page = paginator.paginate_queryset(
+        trash_documents(request.user).prefetch_related("tags").order_by("-deleted_at"),
+        request,
+    )
+    response = paginator.get_paginated_response(TrashSerializer(page, many=True).data)
+    response.data["retention_days"] = settings.EMPTY_TRASH_DELAY
+    return response
+
+
+@api_view(["POST"])
+def trash_restore(request):
+    ids = _ids(request) or []
+    docs = list(trash_documents(request.user).filter(id__in=ids))
+    for doc in docs:
+        doc.restore(strict=False)
+    if docs:
+        with get_backend().batch_update() as batch:
+            batch.add_or_update_ids([d.pk for d in docs])
+    return Response({"restored": [d.pk for d in docs]})
+
+
+@api_view(["POST"])
+def trash_empty(request):
+    """Permanently delete the given ids, or everything in the user's trash."""
+    ids = _ids(request)
+    qs = trash_documents(request.user)
+    if ids is not None:
+        qs = qs.filter(id__in=ids)
+    doc_ids = list(qs.values_list("id", flat=True))
+    if doc_ids:
+        empty_trash(doc_ids=doc_ids)
+    return Response({"deleted": doc_ids})
+
+
+# --------------------------------------------------------------------------- #
+# settings: preferences, OCR configuration, password
+# --------------------------------------------------------------------------- #
+THEMES = {"system", "light", "dark"}
+PAGE_SIZES = {30, 60, 100}
+
+
+@api_view(["GET", "PATCH"])
+def preferences_view(request):
+    ui, _ = UiSettings.objects.get_or_create(user=request.user, defaults={"settings": {}})
+    data = dict(ui.settings or {})
+    if request.method == "PATCH":
+        theme = request.data.get("theme", data.get("theme", "system"))
+        size = request.data.get("page_size", data.get("page_size", 30))
+        try:
+            size = int(size)
+        except (TypeError, ValueError):
+            size = 0
+        if theme not in THEMES or size not in PAGE_SIZES:
+            return Response({"detail": "Ungültiger Wert."}, status=400)
+        data.update({"theme": theme, "page_size": size})
+        ui.settings = data
+        ui.save()
+    return Response(
+        {"theme": data.get("theme", "system"), "page_size": data.get("page_size", 30)},
+    )
+
+
+class OcrConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ApplicationConfiguration
+        fields = (
+            "language",
+            "mode",
+            "archive_file_generation",
+            "output_type",
+            "deskew",
+            "rotate_pages",
+        )
+
+    def validate_language(self, value):
+        value = (value or "").strip()
+        if value and not all(p.replace("_", "").isalnum() for p in value.split("+")):
+            raise serializers.ValidationError(
+                "Sprachcodes mit + verbinden, z. B. deu+eng.",
+            )
+        return value or None
+
+
+def _ocr_defaults() -> dict:
+    return {
+        "language": getattr(settings, "OCR_LANGUAGE", "eng"),
+        "mode": getattr(settings, "OCR_MODE", "auto"),
+        "archive_file_generation": getattr(settings, "ARCHIVE_FILE_GENERATION", "auto"),
+        "output_type": getattr(settings, "OCR_OUTPUT_TYPE", "pdfa"),
+        "deskew": getattr(settings, "OCR_DESKEW", False),
+        "rotate_pages": getattr(settings, "OCR_ROTATE_PAGES", True),
+    }
+
+
+@api_view(["GET", "PATCH"])
+def ocr_config_view(request):
+    config = ApplicationConfiguration.objects.first() or ApplicationConfiguration.objects.create()
+    if request.method == "PATCH":
+        if not request.user.is_superuser:
+            return Response({"detail": "Nur Administratoren."}, status=403)
+        serializer = OcrConfigSerializer(config, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+    return Response({**OcrConfigSerializer(config).data, "defaults": _ocr_defaults()})
+
+
+@api_view(["POST"])
+def password_view(request):
+    user = request.user
+    if not user.check_password(request.data.get("current", "")):
+        return Response({"detail": "Das aktuelle Passwort ist falsch."}, status=400)
+    new = request.data.get("new", "")
+    if len(new) < 8:
+        return Response({"detail": "Das neue Passwort braucht mindestens 8 Zeichen."}, status=400)
+    try:
+        validate_password(new, user)
+    except DjangoValidationError as e:
+        return Response({"detail": " ".join(e.messages)}, status=400)
+    user.set_password(new)
+    user.save()
+    update_session_auth_hash(request, user)
+    return Response({"ok": True})
 
 
 # --------------------------------------------------------------------------- #

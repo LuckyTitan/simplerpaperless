@@ -27,7 +27,8 @@ Ein Container, **kein Redis, keine extra Datenbank** (SQLite liegt in `./data`).
 - Tags links mit **+** anlegen.
 - Neben Tags gibt es **Korrespondenten** (z. B. Stadtwerke) und **Dokumenttypen** (z. B. Rechnung). Sie lassen sich in der Seitenleiste anlegen, filtern und über das Stift-Symbol bearbeiten oder löschen.
 - Zuordnung: automatisch lernen aus deinen bisherigen Zuordnungen, bei bestimmten Wörtern oder nur von Hand.
-- Admins verwalten Benutzer unten links unter **Benutzer**.
+- **Papierkorb:** Gelöschte Dokumente landen zuerst im Papierkorb (Standard: 30 Tage, einstellbar mit `PAPERLESS_EMPTY_TRASH_DELAY`). Dort kannst du sie wiederherstellen oder endgültig löschen.
+- **Einstellungen** (unten links): Darstellung (hell/dunkel, Dokumente pro Seite), Texterkennung (OCR, nur Admins), Passwort ändern und – für Admins – die Benutzerverwaltung.
 
 ## Einstellungen (optional, als Umgebungsvariablen)
 
