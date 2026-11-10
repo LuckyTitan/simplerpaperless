@@ -6,6 +6,7 @@ services:
       context: https://github.com/LuckyTitan/betterpaperless.git#main
     image: archiv:latest
     container_name: archiv
+    pull_policy: build
     restart: unless-stopped
     ports:
       - "8010:8000"
