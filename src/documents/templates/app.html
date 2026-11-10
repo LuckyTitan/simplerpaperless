@@ -79,6 +79,17 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0}
 .chips{display:flex;flex-wrap:wrap;gap:4px}
 .chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:2px 8px;border-radius:99px;background:var(--bg);border:1px solid var(--line)}
 .chip .dot{width:7px;height:7px}
+.chip.type{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
+.meta small.who{color:var(--ink);font-weight:550}
+.hint{color:var(--muted);padding:4px 10px 6px;font-size:14px;margin:0}
+.item .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.navrow{display:flex;align-items:center}
+.navrow .item{flex:1;min-width:0}
+.navrow .edit{border:0;background:none;color:var(--muted);opacity:0;padding:4px 8px;border-radius:6px;margin-left:2px}
+.navrow:hover .edit,.navrow:focus-within .edit{opacity:1}
+.navrow .edit:hover{background:var(--accent-soft);color:var(--accent)}
+.side select{width:100%;padding:9px 10px;border:1px solid var(--line);background:var(--surface);border-radius:8px}
+dialog select{width:100%;padding:9px 10px;border:1px solid var(--line);background:var(--surface);border-radius:8px}
 .empty{display:grid;place-items:center;text-align:center;color:var(--muted);padding:80px 20px;gap:10px}
 .empty b{color:var(--ink);font-size:17px}
 .more{display:block;margin:24px auto 0}
@@ -122,6 +133,7 @@ dialog .act{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
   aside{position:fixed;inset:0 auto 0 0;width:270px;z-index:20;transform:translateX(-100%);transition:transform .2s}
   aside.on{transform:none}
   .menu-btn{display:inline-flex}
+  .navrow .edit{opacity:1}
   .panel-b{grid-template-columns:1fr;grid-template-rows:1fr auto}
   .side{border-left:0;border-top:1px solid var(--line);max-height:46vh}
   .bar{padding:12px 14px;flex-wrap:wrap}.bar .search{order:5;flex:1 1 100%;max-width:none}.bar select{flex:1;min-width:0}
@@ -140,8 +152,8 @@ const h = (html) => { const t = document.createElement("template"); t.innerHTML 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const COLORS = ["#0e7c74","#2f6fdb","#7a4bd8","#c2418f","#d4542b","#c58a0a","#4d8a2e","#5b6b7b"];
 
-const state = { user: null, csrf: "", tags: [], docs: [], next: null, total: 0,
-  tag: null, untagged: false, query: "", ordering: "-created", loading: false, open: null, pending: 0 };
+const state = { user: null, csrf: "", tags: [], corrs: [], types: [], docs: [], next: null, total: 0,
+  tag: null, corr: null, dtype: null, untagged: false, query: "", ordering: "-created", loading: false, open: null, pending: 0 };
 
 async function api(path, opts = {}) {
   const o = { credentials: "same-origin", ...opts, headers: { "X-CSRFToken": state.csrf, ...(opts.headers || {}) } };
@@ -226,25 +238,37 @@ function shell() {
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePanel(); });
 }
 
+const KINDS = {
+  tag:  { api: "/tags/",           list: "tags",  title: "Tags",            one: "Tag",           st: "tag",   none: "Noch keine Tags." },
+  corr: { api: "/correspondents/", list: "corrs", title: "Korrespondenten", one: "Korrespondent", st: "corr",  none: "Noch keine Korrespondenten." },
+  type: { api: "/document_types/", list: "types", title: "Dokumenttypen",   one: "Dokumenttyp",   st: "dtype", none: "Noch keine Dokumenttypen." },
+};
 function renderNav() {
   const nav = $("#nav"); if (!nav) return;
-  const total = state.tags.reduce((m, t) => Math.max(m, t.document_count), 0);
-  nav.innerHTML = `
-    <button class="item ${!state.tag && !state.untagged ? "on" : ""}" data-k="all">Alle Dokumente</button>
-    <button class="item ${state.untagged ? "on" : ""}" data-k="none">Ohne Tag</button>
-    <div class="nav-h">Tags <button id="addTag" aria-label="Tag anlegen" title="Tag anlegen">+</button></div>
-    ${state.tags.map(t => `<button class="item ${state.tag === t.id ? "on" : ""}" data-t="${t.id}">
-      <i class="dot" style="background:${esc(t.color)}"></i><span>${esc(t.name)}</span><span class="n">${t.document_count}</span></button>`).join("")}
-    ${state.tags.length ? "" : '<p style="color:var(--muted);padding:6px 10px;font-size:14px">Noch keine Tags. Lege einen an oder lass sie automatisch zuordnen.</p>'}`;
+  const idle = !state.tag && !state.corr && !state.dtype && !state.untagged;
+  const section = (k) => {
+    const K = KINDS[k], items = state[K.list];
+    return `<div class="nav-h">${K.title} <button data-add="${k}" aria-label="${K.one} anlegen" title="${K.one} anlegen">+</button></div>
+      ${items.map(t => `<div class="navrow"><button class="item ${state[K.st] === t.id ? "on" : ""}" data-k="${k}" data-id="${t.id}">
+        ${k === "tag" ? `<i class="dot" style="background:${esc(t.color)}"></i>` : ""}<span class="nm">${esc(t.name)}</span><span class="n">${t.document_count}</span></button>
+        <button class="edit" data-edit="${k}" data-id="${t.id}" aria-label="${esc(t.name)} bearbeiten" title="Bearbeiten">✎</button></div>`).join("")}
+      ${items.length ? "" : `<p class="hint">${K.none}</p>`}`;
+  };
+  nav.innerHTML = `<button class="item ${idle ? "on" : ""}" data-all="1">Alle Dokumente</button>
+    <button class="item ${state.untagged ? "on" : ""}" data-none="1">Ohne Tag</button>` + section("tag") + section("corr") + section("type");
   nav.onclick = (e) => {
     const b = e.target.closest("button"); if (!b) return;
-    if (b.id === "addTag") return tagDialog();
-    if (b.dataset.k === "all") { state.tag = null; state.untagged = false; }
-    else if (b.dataset.k === "none") { state.tag = null; state.untagged = true; }
-    else if (b.dataset.t) { state.tag = +b.dataset.t; state.untagged = false; }
+    if (b.dataset.add) return entityDialog(b.dataset.add);
+    if (b.dataset.edit) return entityDialog(b.dataset.edit, state[KINDS[b.dataset.edit].list].find(t => t.id === +b.dataset.id));
+    if (b.dataset.all) { state.tag = state.corr = state.dtype = null; state.untagged = false; }
+    else if (b.dataset.none) { state.untagged = !state.untagged; if (state.untagged) state.tag = null; }
+    else if (b.dataset.k) {
+      const f = KINDS[b.dataset.k].st, id = +b.dataset.id;
+      state[f] = state[f] === id ? null : id;
+      if (f === "tag" && state.tag) state.untagged = false;
+    } else return;
     $("#aside").classList.remove("on"); renderNav(); reload();
   };
-  nav.oncontextmenu = (e) => { const b = e.target.closest("[data-t]"); if (b) { e.preventDefault(); tagDialog(state.tags.find(t => t.id === +b.dataset.t)); } };
 }
 
 /* ---------- documents ---------- */
@@ -252,6 +276,8 @@ function params(page) {
   const p = new URLSearchParams({ page, ordering: state.ordering });
   if (state.tag) p.set("tags", state.tag);
   if (state.untagged) p.set("untagged", "1");
+  if (state.corr) p.set("correspondent", state.corr);
+  if (state.dtype) p.set("document_type", state.dtype);
   if (state.query) { p.set("query", state.query); p.delete("ordering"); }
   return p;
 }
@@ -265,12 +291,23 @@ async function more(reset) {
   } catch (e) { toast(e.message); }
   state.loading = false;
 }
+const nameOf = (list, id) => (list.find(x => x.id === id) || {}).name || "";
+const opts = (list, sel) => list.map(x => `<option value="${x.id}" ${x.id === sel ? "selected" : ""}>${esc(x.name)}</option>`).join("");
+function docChips(d) {
+  const t = d.document_type ? `<span class="chip type">${esc(nameOf(state.types, d.document_type))}</span>` : "";
+  return t + tagChips(d.tags);
+}
 function tagChips(ids) {
   return ids.map(id => state.tags.find(t => t.id === id)).filter(Boolean)
     .map(t => `<span class="chip"><i class="dot" style="background:${esc(t.color)}"></i>${esc(t.name)}</span>`).join("");
 }
 function renderList() {
-  const cur = state.untagged ? "Ohne Tag" : state.tag ? (state.tags.find(t => t.id === state.tag) || {}).name : "Alle Dokumente";
+  const parts = [];
+  if (state.untagged) parts.push("Ohne Tag");
+  if (state.tag) parts.push(nameOf(state.tags, state.tag));
+  if (state.corr) parts.push(nameOf(state.corrs, state.corr));
+  if (state.dtype) parts.push(nameOf(state.types, state.dtype));
+  const cur = parts.filter(Boolean).join(" · ") || "Alle Dokumente";
   $("#crumb").innerHTML = `<h2>${esc(cur)}</h2><span>${state.total} ${state.total === 1 ? "Dokument" : "Dokumente"}${state.query ? " gefunden" : ""}</span>
     ${state.pending ? `<span>· ${state.pending} werden verarbeitet …</span>` : ""}`;
   const list = $("#list");
@@ -284,8 +321,8 @@ function renderList() {
   list.innerHTML = `<div class="grid">${state.docs.map(d => `
     <button class="card" data-id="${d.id}">
       <div class="thumb" style="background-image:url('/api/documents/${d.id}/thumb/')"></div>
-      <div class="meta"><b>${esc(d.title || d.original_filename)}</b><small>${fmtDate(d.created)}${d.page_count ? " · " + d.page_count + " S." : ""}</small>
-      <div class="chips">${tagChips(d.tags)}</div></div></button>`).join("")}</div>
+      <div class="meta"><b>${esc(d.title || d.original_filename)}</b>${d.correspondent ? `<small class="who">${esc(nameOf(state.corrs, d.correspondent))}</small>` : ""}<small>${fmtDate(d.created)}${d.page_count ? " · " + d.page_count + " S." : ""}</small>
+      <div class="chips">${docChips(d)}</div></div></button>`).join("")}</div>
     ${state.next ? '<button class="btn more" id="moreBtn">Mehr laden</button>' : ""}`;
   list.onclick = (e) => {
     if (e.target.id === "moreBtn") return more();
@@ -307,6 +344,8 @@ async function openDoc(id) {
       ${isImg && !d.has_archive ? `<img class="pv" src="/api/documents/${d.id}/preview/" alt="">` : `<iframe src="/api/documents/${d.id}/preview/" title="Vorschau"></iframe>`}
       <div class="side">
         <div><label for="pTitle">Titel</label><input type="text" id="pTitle" value="${esc(d.title)}"></div>
+        <div><label for="pCorr">Korrespondent</label><select id="pCorr"><option value="">Keiner</option>${opts(state.corrs, d.correspondent)}</select></div>
+        <div><label for="pType">Dokumenttyp</label><select id="pType"><option value="">Keiner</option>${opts(state.types, d.document_type)}</select></div>
         <div><label>Tags</label><div class="tagpick" id="pTags">
           ${state.tags.map(t => `<button data-t="${t.id}" class="${d.tags.includes(t.id) ? "on" : ""}"><i class="dot" style="background:${esc(t.color)}"></i>${esc(t.name)}</button>`).join("") || '<span style="color:var(--muted)">Lege zuerst einen Tag an.</span>'}
         </div></div>
@@ -319,6 +358,8 @@ async function openDoc(id) {
     try { await api("/documents/" + d.id + "/", { method: "DELETE" }); closePanel(); toast("Gelöscht"); await refreshAll(); } catch (e) { toast(e.message); }
   };
   $("#pTitle").onchange = async (e) => save({ title: e.target.value });
+  $("#pCorr").onchange = (e) => save({ correspondent: e.target.value ? +e.target.value : null });
+  $("#pType").onchange = (e) => save({ document_type: e.target.value ? +e.target.value : null });
   $("#pTags").onclick = async (e) => {
     const b = e.target.closest("button"); if (!b) return;
     const tid = +b.dataset.t; const set = new Set(state.open.tags);
@@ -331,41 +372,62 @@ async function save(patch) {
     const r = await api("/documents/" + state.open.id + "/", { method: "PATCH", json: patch });
     Object.assign(state.open, r);
     const i = state.docs.findIndex(x => x.id === r.id); if (i >= 0) state.docs[i] = { ...state.docs[i], ...r };
-    renderList(); loadTags();
+    renderList(); loadMeta();
   } catch (e) { toast(e.message); }
 }
 function closePanel() { $("#panel")?.classList.remove("on"); $("#veil")?.classList.remove("on"); const p = $("#panel"); setTimeout(() => { if (p && !p.classList.contains("on")) p.innerHTML = ""; }, 250); }
 
-/* ---------- tags ---------- */
-function tagDialog(tag) {
+/* ---------- tags, korrespondenten, dokumenttypen ---------- */
+function entityDialog(kind, obj) {
+  const K = KINDS[kind], isTag = kind === "tag";
+  const algo = obj ? ([0, 1, 6].includes(obj.matching_algorithm) ? obj.matching_algorithm : 1) : 6;
   const dlg = h(`<dialog><form method="dialog" class="row">
-    <h3>${tag ? "Tag bearbeiten" : "Neuer Tag"}</h3>
-    <input type="text" name="name" placeholder="Name, z. B. Rechnung" value="${esc(tag?.name || "")}" required>
-    <div class="colors">${COLORS.map(c => `<input type="radio" name="color" value="${c}" style="--c:${c}" aria-label="${c}" ${(tag?.color || COLORS[0]) === c ? "checked" : ""}>`).join("")}</div>
-    <input type="text" name="match" placeholder="Wörter für automatische Zuordnung (optional)" value="${esc(tag?.match || "")}">
-    <small style="color:var(--muted)">Leer lassen, damit der Tag nur von Hand vergeben wird. Mehrere Wörter mit Leerzeichen trennen.</small>
+    <h3>${obj ? K.one + " bearbeiten" : K.one + " anlegen"}</h3>
+    <input type="text" name="name" placeholder="Name" value="${esc(obj?.name || "")}" required>
+    ${isTag ? `<div class="colors">${COLORS.map(c => `<input type="radio" name="color" value="${c}" style="--c:${c}" aria-label="${c}" ${(obj?.color || COLORS[0]) === c ? "checked" : ""}>`).join("")}</div>` : ""}
+    <select name="algo" aria-label="Automatische Zuordnung">
+      <option value="6" ${algo === 6 ? "selected" : ""}>Automatisch lernen aus deinen Zuordnungen</option>
+      <option value="1" ${algo === 1 ? "selected" : ""}>Bei bestimmten Wörtern im Dokument</option>
+      <option value="0" ${algo === 0 ? "selected" : ""}>Nur von Hand zuordnen</option>
+    </select>
+    <input type="text" name="match" placeholder="Wörter, durch Leerzeichen getrennt" value="${esc(obj?.match || "")}">
+    <small style="color:var(--muted)" id="hintAlgo"></small>
     <div class="err"></div>
-    <div class="act">${tag ? '<button type="button" class="btn danger" id="del">Löschen</button>' : ""}<span style="flex:1"></span>
+    <div class="act">${obj ? '<button type="button" class="btn danger" id="del">Löschen</button>' : ""}<span style="flex:1"></span>
       <button type="button" class="btn" id="cancel">Abbrechen</button><button class="btn primary">Speichern</button></div>
   </form></dialog>`);
   document.body.append(dlg); dlg.showModal();
+  const sync = () => {
+    const a = +$("[name=algo]", dlg).value;
+    $("[name=match]", dlg).style.display = a === 1 ? "" : "none";
+    $("#hintAlgo", dlg).textContent = a === 6
+      ? "Je mehr Dokumente du von Hand zuordnest, desto besser erkennt Archiv " + K.one + " selbst."
+      : a === 1 ? "Wird zugeordnet, sobald eines dieser Wörter im Text vorkommt." : "";
+  };
+  $("[name=algo]", dlg).onchange = sync; sync();
   $("#cancel", dlg).onclick = () => { dlg.close(); dlg.remove(); };
-  if (tag) $("#del", dlg).onclick = async () => {
-    if (!confirm("Tag „" + tag.name + "“ löschen? Die Dokumente bleiben erhalten.")) return;
-    await api("/tags/" + tag.id + "/", { method: "DELETE" }); dlg.close(); dlg.remove();
-    if (state.tag === tag.id) state.tag = null; await refreshAll();
+  if (obj) $("#del", dlg).onclick = async () => {
+    if (!confirm(K.one + " „" + obj.name + "“ löschen? Die Dokumente bleiben erhalten.")) return;
+    try { await api(K.api + obj.id + "/", { method: "DELETE" }); } catch (e) { return toast(e.message); }
+    dlg.close(); dlg.remove(); if (state[K.st] === obj.id) state[K.st] = null; await refreshAll();
   };
   $("form", dlg).onsubmit = async (ev) => {
     ev.preventDefault(); const f = Object.fromEntries(new FormData(ev.target));
-    const body = { name: f.name.trim(), color: f.color, match: f.match.trim(), matching_algorithm: f.match.trim() ? 1 : 0 };
+    const a = +f.algo, words = (f.match || "").trim();
+    if (a === 1 && !words) return ($(".err", dlg).textContent = "Gib mindestens ein Wort an oder wähle eine andere Zuordnung.");
+    const body = { name: f.name.trim(), matching_algorithm: a, match: a === 1 ? words : "" };
+    if (isTag) body.color = f.color;
     try {
-      await api(tag ? "/tags/" + tag.id + "/" : "/tags/", { method: tag ? "PATCH" : "POST", json: body });
+      await api(obj ? K.api + obj.id + "/" : K.api, { method: obj ? "PATCH" : "POST", json: body });
       dlg.close(); dlg.remove(); await refreshAll();
     } catch (e) { $(".err", dlg).textContent = e.message; }
   };
 }
-async function loadTags() { state.tags = await api("/tags/"); renderNav(); }
-async function refreshAll() { await loadTags(); await reload(); }
+async function loadMeta() {
+  [state.tags, state.corrs, state.types] = await Promise.all([api("/tags/"), api("/correspondents/"), api("/document_types/")]);
+  renderNav();
+}
+async function refreshAll() { await loadMeta(); await reload(); }
 
 /* ---------- users ---------- */
 async function usersDialog() {
@@ -390,6 +452,8 @@ async function upload(files) {
   if (!files.length) return;
   const fd = new FormData(); files.forEach(f => fd.append("files", f));
   if (state.tag) fd.append("tags", state.tag);
+  if (state.corr) fd.append("correspondent", state.corr);
+  if (state.dtype) fd.append("document_type", state.dtype);
   try {
     await api("/documents/upload/", { method: "POST", body: fd });
     toast(files.length === 1 ? "Wird verarbeitet …" : files.length + " Dateien werden verarbeitet …");
@@ -419,7 +483,7 @@ addEventListener("drop", (e) => { e.preventDefault(); depth = 0; drop.classList.
 /* ---------- boot ---------- */
 async function start() {
   if (!state.user) return;
-  shell(); await loadTags(); await reload();
+  shell(); await loadMeta(); await reload();
   $("#scroll").addEventListener("scroll", (e) => { const s = e.target; if (s.scrollTop + s.clientHeight > s.scrollHeight - 400) more(); });
 }
 (async () => {

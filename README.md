@@ -24,9 +24,9 @@ Ein Container, **kein Redis, keine extra Datenbank** (SQLite liegt in `./data`).
 ## Bedienung
 
 - Dateien in das Fenster ziehen oder auf **Hochladen** klicken.
-- Tags links mit **+** anlegen. Tragen sie „Wörter für automatische Zuordnung“ ein, vergibt der
-  Klassifikator den Tag automatisch, sobald diese Wörter im Dokument vorkommen.
-- Rechtsklick auf einen Tag in der Seitenleiste bearbeitet oder löscht ihn.
+- Tags links mit **+** anlegen.
+- Neben Tags gibt es **Korrespondenten** (z. B. Stadtwerke) und **Dokumenttypen** (z. B. Rechnung). Sie lassen sich in der Seitenleiste anlegen, filtern und über das Stift-Symbol bearbeiten oder löschen.
+- Zuordnung: automatisch lernen aus deinen bisherigen Zuordnungen, bei bestimmten Wörtern oder nur von Hand.
 - Admins verwalten Benutzer unten links unter **Benutzer**.
 
 ## Einstellungen (optional, als Umgebungsvariablen)

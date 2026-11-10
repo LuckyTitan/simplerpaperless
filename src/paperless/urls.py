@@ -8,6 +8,8 @@ from documents import api
 router = DefaultRouter()
 router.register(r"documents", api.DocumentViewSet, basename="documents")
 router.register(r"tags", api.TagViewSet, basename="tags")
+router.register(r"correspondents", api.CorrespondentViewSet, basename="correspondents")
+router.register(r"document_types", api.DocumentTypeViewSet, basename="document_types")
 router.register(r"users", api.UserViewSet, basename="users")
 
 urlpatterns = [

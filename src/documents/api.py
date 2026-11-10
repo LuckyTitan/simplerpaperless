@@ -42,7 +42,9 @@ from rest_framework.viewsets import ModelViewSet
 from documents.data_models import ConsumableDocument
 from documents.data_models import DocumentMetadataOverrides
 from documents.data_models import DocumentSource
+from documents.models import Correspondent
 from documents.models import Document
+from documents.models import DocumentType
 from documents.models import Tag
 from documents.search import SearchMode
 from documents.search import SearchQueryError
@@ -61,11 +63,15 @@ def visible_documents(user):
     return qs.filter(Q(owner=user) | Q(owner__isnull=True))
 
 
-def visible_tags(user):
-    qs = Tag.objects.all()
+def visible_named(model, user):
+    qs = model.objects.all()
     if user.is_superuser:
         return qs
     return qs.filter(Q(owner=user) | Q(owner__isnull=True))
+
+
+def visible_tags(user):
+    return visible_named(Tag, user)
 
 
 class Pagination(PageNumberPagination):
@@ -106,10 +112,54 @@ class TagSerializer(serializers.ModelSerializer):
         return value
 
 
+class _MatchSerializer(serializers.ModelSerializer):
+    document_count = serializers.IntegerField(read_only=True)
+
+    def validate_name(self, value):
+        qs = self.Meta.model.objects.filter(name__iexact=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("Name existiert bereits.")
+        return value
+
+
+_MATCH_FIELDS = (
+    "id",
+    "name",
+    "match",
+    "matching_algorithm",
+    "is_insensitive",
+    "document_count",
+)
+
+
+class CorrespondentSerializer(_MatchSerializer):
+    class Meta:
+        model = Correspondent
+        fields = _MATCH_FIELDS
+
+
+class DocumentTypeSerializer(_MatchSerializer):
+    class Meta:
+        model = DocumentType
+        fields = _MATCH_FIELDS
+
+
 class DocumentSerializer(serializers.ModelSerializer):
     tags = serializers.PrimaryKeyRelatedField(
         many=True,
         queryset=Tag.objects.all(),
+        required=False,
+    )
+    correspondent = serializers.PrimaryKeyRelatedField(
+        queryset=Correspondent.objects.all(),
+        allow_null=True,
+        required=False,
+    )
+    document_type = serializers.PrimaryKeyRelatedField(
+        queryset=DocumentType.objects.all(),
+        allow_null=True,
         required=False,
     )
     has_archive = serializers.SerializerMethodField()
@@ -125,6 +175,8 @@ class DocumentSerializer(serializers.ModelSerializer):
             "mime_type",
             "page_count",
             "original_filename",
+            "correspondent",
+            "document_type",
             "tags",
             "has_archive",
         )
@@ -286,6 +338,48 @@ class TagViewSet(ModelViewSet):
         return obj
 
 
+class _NamedViewSet(ModelViewSet):
+    """Correspondents and document types: same shape, one foreign key each."""
+
+    permission_classes = (IsAuthenticated,)
+    pagination_class = None
+    model = None
+    doc_field = ""
+
+    def get_queryset(self):
+        counts = dict(
+            visible_documents(self.request.user)
+            .exclude(**{f"{self.doc_field}__isnull": True})
+            .order_by()
+            .values_list(self.doc_field)
+            .annotate(c=Count("pk"))
+            .values_list(self.doc_field, "c"),
+        )
+        items = list(visible_named(self.model, self.request.user).order_by("name"))
+        for i in items:
+            i.document_count = counts.get(i.pk, 0)
+        return items
+
+    def get_object(self):
+        obj = visible_named(self.model, self.request.user).filter(pk=self.kwargs["pk"]).first()
+        if obj is None:
+            raise Http404
+        obj.document_count = 0
+        return obj
+
+
+class CorrespondentViewSet(_NamedViewSet):
+    serializer_class = CorrespondentSerializer
+    model = Correspondent
+    doc_field = "correspondent_id"
+
+
+class DocumentTypeViewSet(_NamedViewSet):
+    serializer_class = DocumentTypeSerializer
+    model = DocumentType
+    doc_field = "document_type_id"
+
+
 # --------------------------------------------------------------------------- #
 # documents
 # --------------------------------------------------------------------------- #
@@ -306,6 +400,10 @@ class DocumentViewSet(ModelViewSet):
             qs = qs.filter(tags__id=tag_id)
         if params.get("untagged") in ("1", "true"):
             qs = qs.filter(tags__isnull=True)
+        if params.get("correspondent", "").isdigit():
+            qs = qs.filter(correspondent_id=int(params["correspondent"]))
+        if params.get("document_type", "").isdigit():
+            qs = qs.filter(document_type_id=int(params["document_type"]))
 
         query = params.get("query", "").strip()
         if query:
@@ -387,6 +485,10 @@ def upload_view(request):
         return Response({"detail": "Keine Datei übermittelt."}, status=400)
 
     tag_ids = [int(t) for t in request.data.getlist("tags") if str(t).isdigit()]
+    corr = request.data.get("correspondent")
+    dtype = request.data.get("document_type")
+    corr_id = int(corr) if corr and str(corr).isdigit() else None
+    dtype_id = int(dtype) if dtype and str(dtype).isdigit() else None
     task_ids = []
     settings.SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
     for f in files:
@@ -406,6 +508,8 @@ def upload_view(request):
                 "overrides": DocumentMetadataOverrides(
                     filename=name,
                     tag_ids=tag_ids or None,
+                    correspondent_id=corr_id,
+                    document_type_id=dtype_id,
                     owner_id=request.user.id,
                 ),
             },
