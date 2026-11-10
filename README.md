@@ -6,7 +6,14 @@ Nur das Wesentliche: Dokumente hochladen, per OCR lesbar machen, automatisch mit
 **Bewusst entfernt:** E-Mail-Import, Workflows, Share-Links, Custom Fields, KI/LLM, Websockets,
 Redis, Postgres/MariaDB, MFA/Social-Login und die komplette Angular-Oberfläche.
 
-## Start
+## Start mit Portainer (ohne lokalen Build)
+
+GitHub baut das Image bei jedem Push automatisch (`.github/workflows/image.yml`) und legt es unter
+`ghcr.io/luckytitan/betterpaperless:latest` ab. In Portainer den Inhalt von `docker-compose.portainer.yml`
+als Stack einfügen. Zum Aktualisieren: **Update the stack** mit aktiviertem *Re-pull image*.
+Das Paket muss auf GitHub unter *Packages → Package settings* auf **Public** stehen.
+
+## Start mit Docker Compose (lokaler Build)
 
 ```bash
 docker compose up -d --build

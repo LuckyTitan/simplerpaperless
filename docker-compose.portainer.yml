@@ -1,12 +1,10 @@
 # Portainer: Stacks -> Add stack -> Web editor -> diesen Inhalt einfügen -> Deploy.
-# Das Image wird beim ersten Deploy direkt aus GitHub gebaut (dauert einige Minuten).
+# Das fertige Image wird von GitHub gebaut und hier nur geladen (kein Build auf deinem Server).
 services:
   archiv:
-    build:
-      context: https://github.com/LuckyTitan/betterpaperless.git#main
-    image: archiv:latest
+    image: ghcr.io/luckytitan/betterpaperless:latest
     container_name: archiv
-    pull_policy: build
+    pull_policy: always
     restart: unless-stopped
     ports:
       - "8010:8000"
