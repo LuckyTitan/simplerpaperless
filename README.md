@@ -30,12 +30,13 @@ Ein Container, **kein Redis, keine extra Datenbank** (SQLite liegt in `./data`).
 
 ## Bedienung
 
-- Dateien in das Fenster ziehen oder auf **Hochladen** klicken.
-- Tags links mit **+** anlegen.
-- Neben Tags gibt es **Korrespondenten** (z. B. Stadtwerke) und **Dokumenttypen** (z. B. Rechnung). Sie lassen sich in der Seitenleiste anlegen, filtern und über das Stift-Symbol bearbeiten oder löschen.
-- Zuordnung: automatisch lernen aus deinen bisherigen Zuordnungen, bei bestimmten Wörtern oder nur von Hand.
+- **Hochladen:** Dateien in das Fenster ziehen oder auf **Hochladen** klicken. Neue Dokumente landen im **Posteingang**, bis sie einen Tag haben.
+- **Alle Dokumente:** Oben filterst du nach Tag, Korrespondent und Dokumenttyp. Die Filter lassen sich kombinieren und mit **Filter zurücksetzen** wieder löschen. Die Suche durchsucht auch den erkannten Text.
+- **Tags, Korrespondenten, Dokumenttypen:** Ein Klick auf den Menüpunkt in der Seitenleiste zeigt rechts alle Einträge. Dort legst du neue an, bearbeitest oder löschst sie mit dem Stift-Symbol. Ein Klick auf einen Eintrag zeigt die zugehörigen Dokumente.
+- **Zuordnung:** automatisch lernen aus deinen bisherigen Zuordnungen, bei bestimmten Wörtern oder nur von Hand.
+- **Dokument öffnen:** Reiter **Vorschau** und **Inhalt** (der per Texterkennung ausgelesene Text). Rechts änderst du Titel, Korrespondent, Dokumenttyp und Tags.
 - **Papierkorb:** Gelöschte Dokumente landen zuerst im Papierkorb (Standard: 30 Tage, einstellbar mit `PAPERLESS_EMPTY_TRASH_DELAY`). Dort kannst du sie wiederherstellen oder endgültig löschen.
-- **Einstellungen** (unten links): Darstellung (hell/dunkel, Dokumente pro Seite), Texterkennung (OCR, nur Admins), Passwort ändern und – für Admins – die Benutzerverwaltung.
+- **Einstellungen** (unten links): Darstellung (hell/dunkel, Akzentfarbe per Schieber, Dokumente pro Seite), Texterkennung (OCR, nur Admins), Passwort ändern und – für Admins – die Benutzerverwaltung.
 
 ## Einstellungen (optional, als Umgebungsvariablen)
 
