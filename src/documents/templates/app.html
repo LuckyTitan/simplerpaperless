@@ -86,9 +86,10 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0}
 .crumb{display:flex;align-items:baseline;gap:10px;margin:4px 0 14px}
 .crumb h2{margin:0;font-size:20px;letter-spacing:-.01em}
 .crumb span{color:var(--muted)}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:12px;font-size:13px}
 .card{background:var(--surface);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;cursor:pointer;border:1px solid transparent;text-align:left;padding:0}
 .card:hover{border-color:var(--accent)}
+.card .meta{padding:6px 8px}.card .meta b{font-size:13px}.card small{font-size:11px}
 .thumb{aspect-ratio:3/4;background:var(--bg) center top/cover no-repeat;border-bottom:1px solid var(--line)}
 .meta{padding:10px 12px 12px;display:grid;gap:6px}
 .meta b{font-weight:600;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.3}
@@ -135,6 +136,14 @@ dialog select{width:100%;padding:9px 10px;border:1px solid var(--line);backgroun
 .panel.on{transform:none;visibility:visible;transition:transform .22s ease}
 .panel-h{display:flex;gap:8px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line)}
 .panel-h .sp{flex:1}
+.tabs{display:flex;gap:2px;margin-left:8px}
+.tabs button{border:0;background:none;padding:6px 12px;border-radius:8px;color:var(--muted);font-weight:600}
+.tabs button.on{background:var(--accent-soft);color:var(--accent)}
+.pane{min-height:0;min-width:0;display:grid}
+.pane>*{grid-area:1/1}
+.pane .txt{margin:0;padding:18px 20px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--surface);user-select:text}
+.pane .txt.none{color:var(--muted);font-family:inherit}
+.pane [hidden]{display:none}
 .panel-b{display:grid;grid-template-columns:1fr 260px;min-height:0}
 .panel-b iframe,.panel-b img.pv{width:100%;height:100%;border:0;background:var(--bg);object-fit:contain}
 .side{border-left:1px solid var(--line);padding:16px;overflow:auto;display:grid;gap:14px;align-content:start}
@@ -170,7 +179,7 @@ dialog .act{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
   .panel-b{grid-template-columns:1fr;grid-template-rows:1fr auto}
   .side{border-left:0;border-top:1px solid var(--line);max-height:46vh}
   .bar{padding:12px 14px;flex-wrap:wrap}.bar .search{order:5;flex:1 1 100%;max-width:none}.bar select{flex:1;min-width:0}
-  .scroll{padding:4px 14px 28px}.grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .scroll{padding:4px 14px 28px}.grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -181,6 +190,7 @@ dialog .act{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 <script>
 "use strict";
 const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const h = (html) => { const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const COLORS = ["#0e7c74","#2f6fdb","#7a4bd8","#c2418f","#d4542b","#c58a0a","#4d8a2e","#5b6b7b"];
@@ -405,11 +415,15 @@ async function openDoc(id) {
   const p = $("#panel");
   const isImg = d.mime_type && d.mime_type.startsWith("image/");
   p.innerHTML = `
-    <div class="panel-h"><button class="btn ghost" id="pClose">Schließen</button><span class="sp"></span>
+    <div class="panel-h"><button class="btn ghost" id="pClose">Schließen</button>
+      <div class="tabs" role="tablist"><button class="on" data-tab="pv" role="tab">Vorschau</button><button data-tab="tx" role="tab">Inhalt</button></div><span class="sp"></span>
       <a class="btn" href="/api/documents/${d.id}/download/">Herunterladen</a>
       <button class="btn danger" id="pDel">In den Papierkorb</button></div>
     <div class="panel-b">
-      ${isImg && !d.has_archive ? `<img class="pv" src="/api/documents/${d.id}/preview/" alt="">` : `<iframe src="/api/documents/${d.id}/preview/" title="Vorschau"></iframe>`}
+      <div class="pane">
+      ${isImg && !d.has_archive ? `<img class="pv" id="pvEl" src="/api/documents/${d.id}/preview/" alt="">` : `<iframe id="pvEl" src="/api/documents/${d.id}/preview/" title="Vorschau"></iframe>`}
+      <pre class="txt ${d.content && d.content.trim() ? "" : "none"}" id="txEl" hidden>${esc(d.content && d.content.trim() ? d.content : "Aus diesem Dokument wurde kein Text ausgelesen.")}</pre>
+      </div>
       <div class="side">
         <div><label for="pTitle">Titel</label><input type="text" id="pTitle" value="${esc(d.title)}"></div>
         <div><label for="pCorr">Korrespondent</label><select id="pCorr"><option value="">Keiner</option>${opts(state.corrs, d.correspondent)}</select></div>
@@ -421,6 +435,11 @@ async function openDoc(id) {
       </div></div>`;
   p.classList.add("on"); $("#veil").classList.add("on");
   $("#pClose").onclick = closePanel;
+  $(".tabs", p).onclick = (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    $$(".tabs button", p).forEach(x => x.classList.toggle("on", x === b));
+    $("#pvEl").hidden = b.dataset.tab !== "pv"; $("#txEl").hidden = b.dataset.tab !== "tx";
+  };
   $("#pDel").onclick = async () => {
     try { await api("/documents/" + d.id + "/", { method: "DELETE" }); closePanel(); toast("In den Papierkorb verschoben"); await refreshAll(); loadTrashCount(); }
     catch (e) { toast(e.message); }
