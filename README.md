@@ -6,12 +6,20 @@ Nur das Wesentliche: Dokumente hochladen, per OCR lesbar machen, automatisch mit
 **Bewusst entfernt:** E-Mail-Import, Workflows, Share-Links, Custom Fields, KI/LLM, Websockets,
 Redis, Postgres/MariaDB, MFA/Social-Login und die komplette Angular-Oberfläche.
 
-## Start mit Portainer (ohne lokalen Build)
+## Installation mit Portainer
 
-GitHub baut das Image bei jedem Push automatisch (`.github/workflows/image.yml`) und legt es unter
-`ghcr.io/luckytitan/simplerpaperless:latest` ab. In Portainer den Inhalt von `docker-compose.portainer.yml`
-als Stack einfügen. Zum Aktualisieren: **Update the stack** mit aktiviertem *Re-pull image*.
-Das Paket muss auf GitHub unter *Packages → Package settings* auf **Public** stehen.
+Du brauchst nichts selbst zu bauen: GitHub erstellt das Image bei jedem Push automatisch
+(`.github/workflows/image.yml`) und legt es unter `ghcr.io/luckytitan/simplerpaperless:latest` ab.
+
+1. **Einmalig auf GitHub:** Unter *Packages → simplerpaperless → Package settings* die Sichtbarkeit auf **Public** stellen, damit Portainer das Image ohne Login laden kann.
+2. **Ordner für Scans anlegen:** `mkdir -p /opt/archiv/consume` auf dem Docker-Host.
+3. **Stack anlegen:** In Portainer *Stacks → Add stack → Web editor*, den Inhalt von `docker-compose.portainer.yml` einfügen und **Deploy the stack** wählen.
+4. **Öffnen:** `http://<host>:8010`. Beim ersten Aufruf legst du das Administrator-Konto an.
+
+**Aktualisieren:** *Stacks → archiv → Editor → Update the stack* mit aktiviertem **Re-pull image and redeploy**.
+Daten und Dokumente bleiben erhalten (Volumes `archiv_data` und `archiv_media`).
+
+Port, Zeitzone oder OCR-Sprache änderst du direkt in der Compose-Datei (`ports:` bzw. `environment:`).
 
 ## Start mit Docker Compose (lokaler Build)
 
@@ -19,7 +27,7 @@ Das Paket muss auf GitHub unter *Packages → Package settings* auf **Public** s
 docker compose up -d --build
 ```
 
-Dann `http://<host>:8000` öffnen. Beim ersten Aufruf legst du das Administrator-Konto an.
+Dann `http://<host>:8010` öffnen. Beim ersten Aufruf legst du das Administrator-Konto an.
 Ein Container, **kein Redis, keine extra Datenbank** (SQLite liegt in `./data`).
 
 | Ordner | Inhalt |
