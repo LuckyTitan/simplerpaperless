@@ -281,7 +281,7 @@ function shell() {
   let t; $("#q").oninput = (e) => { clearTimeout(t); t = setTimeout(() => { state.query = e.target.value.trim(); reload(); }, 250); };
   $("#file").onchange = (e) => { upload([...e.target.files]); e.target.value = ""; };
   $("#veil").onclick = closePanel;
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePanel(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !document.querySelector("dialog[open]")) closePanel(); });
 }
 
 const KINDS = {
@@ -426,8 +426,8 @@ async function openDoc(id) {
       </div>
       <div class="side">
         <div><label for="pTitle">Titel</label><input type="text" id="pTitle" value="${esc(d.title)}"></div>
-        <div><label for="pCorr">Korrespondent</label><select id="pCorr"><option value="">Keiner</option>${opts(state.corrs, d.correspondent)}</select></div>
-        <div><label for="pType">Dokumenttyp</label><select id="pType"><option value="">Keiner</option>${opts(state.types, d.document_type)}</select></div>
+        <div><label for="pCorr">Korrespondent</label><select id="pCorr"><option value="">Keiner</option>${opts(state.corrs, d.correspondent)}<option value="__new">+ Neuen Korrespondenten anlegen …</option></select></div>
+        <div><label for="pType">Dokumenttyp</label><select id="pType"><option value="">Keiner</option>${opts(state.types, d.document_type)}<option value="__new">+ Neuen Dokumenttyp anlegen …</option></select></div>
         <div><label>Tags</label><div class="tagpick" id="pTags">
           ${state.tags.map(t => `<button data-t="${t.id}" class="${d.tags.includes(t.id) ? "on" : ""}"><i class="dot" style="background:${esc(t.color)}"></i>${esc(t.name)}</button>`).join("") || '<span style="color:var(--muted)">Lege zuerst einen Tag an.</span>'}
         </div></div>
@@ -445,8 +445,18 @@ async function openDoc(id) {
     catch (e) { toast(e.message); }
   };
   $("#pTitle").onchange = async (e) => save({ title: e.target.value });
-  $("#pCorr").onchange = (e) => save({ correspondent: e.target.value ? +e.target.value : null });
-  $("#pType").onchange = (e) => save({ document_type: e.target.value ? +e.target.value : null });
+  const pick = (sel, kind, field) => {
+    sel.onchange = (e) => {
+      const v = e.target.value;
+      if (v !== "__new") return save({ [field]: v ? +v : null });
+      entityDialog(kind, null, async (created) => {
+        if (created) { await save({ [field]: created.id }); await openDoc(d.id); }
+        else sel.value = state.open[field] ?? "";
+      });
+    };
+  };
+  pick($("#pCorr"), "corr", "correspondent");
+  pick($("#pType"), "type", "document_type");
   $("#pTags").onclick = async (e) => {
     const b = e.target.closest("button"); if (!b) return;
     const tid = +b.dataset.t; const set = new Set(state.open.tags);
@@ -465,7 +475,8 @@ async function save(patch) {
 function closePanel() { $("#panel")?.classList.remove("on"); $("#veil")?.classList.remove("on"); const p = $("#panel"); setTimeout(() => { if (p && !p.classList.contains("on")) p.innerHTML = ""; }, 250); }
 
 /* ---------- tags, korrespondenten, dokumenttypen ---------- */
-function entityDialog(kind, obj) {
+function entityDialog(kind, obj, cb) {
+  let saved = false;
   const K = KINDS[kind], isTag = kind === "tag";
   const algo = obj ? ([0, 1, 6].includes(obj.matching_algorithm) ? obj.matching_algorithm : 1) : 6;
   const dlg = h(`<dialog><form method="dialog" class="row">
@@ -484,6 +495,7 @@ function entityDialog(kind, obj) {
       <button type="button" class="btn" id="cancel">Abbrechen</button><button class="btn primary">Speichern</button></div>
   </form></dialog>`);
   document.body.append(dlg); dlg.showModal();
+  dlg.addEventListener("close", () => { dlg.remove(); if (!saved && cb) cb(null); });
   const sync = () => {
     const a = +$("[name=algo]", dlg).value;
     $("[name=match]", dlg).style.display = a === 1 ? "" : "none";
@@ -505,8 +517,8 @@ function entityDialog(kind, obj) {
     const body = { name: f.name.trim(), matching_algorithm: a, match: a === 1 ? words : "" };
     if (isTag) body.color = f.color;
     try {
-      await api(obj ? K.api + obj.id + "/" : K.api, { method: obj ? "PATCH" : "POST", json: body });
-      dlg.close(); dlg.remove(); await refreshAll();
+      const r = await api(obj ? K.api + obj.id + "/" : K.api, { method: obj ? "PATCH" : "POST", json: body });
+      saved = true; dlg.close(); await refreshAll(); if (cb) cb(r);
     } catch (e) { $(".err", dlg).textContent = e.message; }
   };
 }
